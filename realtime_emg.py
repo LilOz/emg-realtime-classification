@@ -1,6 +1,6 @@
 import threading
 import time
-from collections import deque
+from collections import deque, Counter
 from itertools import combinations
 import os
 import joblib
@@ -12,6 +12,10 @@ from pyOpenBCI import OpenBCICyton
 from scipy.signal import butter, iirnotch, lfilter, lfilter_zi
 from tensorflow.keras.models import load_model
 from feature_extractors import ln_rms, aac, mavs, ssc, wamp, skewness, ssi
+
+PRINT_INTERVAL = 0.512
+PREDICTION_BUFFER_SIZE = 8
+CLASSIFY_INTERVAL = PRINT_INTERVAL / PREDICTION_BUFFER_SIZE
 
 POSE_MAP = {
     1: "rest",
@@ -82,10 +86,10 @@ def classify_real_time(window):
 
 # ====== Streaming Thread ======
 def stream_thread(reverse_channels=False):
-    global band_states, notch_states, last_print_time
+    global band_states, notch_states, last_print_time, last_classify_time
 
     def handle_stream(sample):
-        global band_states, notch_states, last_print_time
+        global band_states, notch_states, last_print_time, last_classify_time
 
         raw_data = []
         for i in range(8):
@@ -103,16 +107,19 @@ def stream_thread(reverse_channels=False):
             plot_buffers[i].append(val)
 
         if all(len(buf) == buffer_size for buf in channel_buffers):
-            if time.time() - last_print_time > 0.5:
+            if time.time() - last_classify_time > CLASSIFY_INTERVAL:
                 window = pd.DataFrame(
                     {f" EXG Channel {i}": list(channel_buffers[i]) for i in range(8)}
                 )
-                prediction = classify_real_time(window)
+                prediction_buffer.append(classify_real_time(window))
+                last_classify_time = time.time()
+            if time.time() - last_print_time > PRINT_INTERVAL:
+                prediction = Counter(prediction_buffer).most_common(1)[0][0]                
                 print("Predicted class:", POSE_MAP.get(prediction + 1, prediction))
                 last_print_time = time.time()
 
     last_print_time = 0
-
+    last_classify_time = 0
     board = OpenBCICyton(port="/dev/tty.usbserial-DM03H689")
     for ch in range(1, 9):
         cmd = f"x{ch}0400000X"
@@ -138,6 +145,8 @@ b_notch, a_notch = iirnotch(notch_freq / nyq, 30)
 # ====== Shared Buffers ======
 channel_buffers = [deque(maxlen=buffer_size) for _ in range(8)]  # for classification
 plot_buffers = [deque(maxlen=plot_buffer_len) for _ in range(8)] # for plotting
+
+prediction_buffer = deque(maxlen=PREDICTION_BUFFER_SIZE)
 
 band_states = [lfilter_zi(b_band, a_band) * 0 for _ in range(8)]
 notch_states = [lfilter_zi(b_notch, a_notch) * 0 for _ in range(8)]
