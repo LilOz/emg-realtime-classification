@@ -1,18 +1,21 @@
+import os
 import threading
 import time
-from collections import deque, Counter
+from collections import Counter, deque
 from itertools import combinations
-import os
+
 import joblib
+import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.animation import FuncAnimation
+from matplotlib.gridspec import GridSpec
 from pyOpenBCI import OpenBCICyton
 from scipy.signal import butter, iirnotch, lfilter, lfilter_zi
 from tensorflow.keras.models import load_model
-from feature_extractors import ln_rms, aac, mavs, ssc, wamp, skewness, ssi
-import matplotlib.image as mpimg
+
+from feature_extractors import aac, ln_rms, mavs, skewness, ssc, ssi, wamp
 
 PRINT_INTERVAL = 0.512
 PREDICTION_BUFFER_SIZE = 8
@@ -29,11 +32,12 @@ POSE_IMAGES = {
 POSE_MAP = {
     1: "rest",
     2: "fist",
-    3: "wrist flexion (down)",
-    4: "wrist extension (up)",
-    5: "radial deviation (right)",
-    6: "ulnar deviation (left)",
+    3: "wrist flexion",
+    4: "wrist extension",
+    5: "radial deviation",
+    6: "ulnar deviation",
 }
+
 
 # Ask user for arm selection before starting the stream
 def select_arm():
@@ -43,9 +47,12 @@ def select_arm():
             return choice == "r"
         print("Invalid input. Please enter 'L' for left or 'R' for right.")
 
+
 # ====== Model Selection ======
 def select_model(models_dir="models", max_models=10):
-    subdirs = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))]
+    subdirs = [
+        d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))
+    ]
     subdirs = sorted(subdirs)[:max_models]
 
     if not subdirs:
@@ -65,16 +72,21 @@ def select_model(models_dir="models", max_models=10):
     print(f"Loaded model: {subdirs[idx]}")
     return model, scaler
 
-def extract_features(window, feature_extractors=[ln_rms, aac, mavs, ssc, wamp, skewness, ssi]):
+
+def extract_features(
+    window, feature_extractors=[ln_rms, aac, mavs, ssc, wamp, skewness, ssi]
+):
     features = []
     channel_data = []
 
     for i in range(8):
-        x = window[f' EXG Channel {i}'].values
+        x = window[f" EXG Channel {i}"].values
         channel_data.append(x)
         for extractor in feature_extractors:
             result = extractor(x)
-            features.extend(result if isinstance(result, (list, np.ndarray)) else [result])
+            features.extend(
+                result if isinstance(result, (list, np.ndarray)) else [result]
+            )
 
     channel_data = np.array(channel_data)
     for i, j in combinations(range(8), 2):
@@ -88,7 +100,9 @@ def classify_real_time(window):
     features = extract_features(window)
     features_scaled = scaler.transform([features])
     probs = model.predict(features_scaled, verbose=0)
-    predicted_class = np.argmax(probs, axis=1)[0]  # using softmax so choose the highest probability
+    predicted_class = np.argmax(probs, axis=1)[
+        0
+    ]  # using softmax so choose the highest probability
     return predicted_class
 
 
@@ -103,7 +117,9 @@ def stream_thread(reverse_channels=False):
         for i in range(8):
             x = sample.channels_data[i] * SCALE_FACTOR_EEG
             x_band, band_states[i] = lfilter(b_band, a_band, [x], zi=band_states[i])
-            x_notch, notch_states[i] = lfilter(b_notch, a_notch, x_band, zi=notch_states[i])
+            x_notch, notch_states[i] = lfilter(
+                b_notch, a_notch, x_band, zi=notch_states[i]
+            )
             x_notch[0] = np.clip(x_notch[0], -600, 600)
             raw_data.append(x_notch[0])
 
@@ -122,7 +138,7 @@ def stream_thread(reverse_channels=False):
                 prediction_buffer.append(classify_real_time(window))
                 last_classify_time = time.time()
             if time.time() - last_print_time > PRINT_INTERVAL:
-                prediction = Counter(prediction_buffer).most_common(1)[0][0]                
+                prediction = Counter(prediction_buffer).most_common(1)[0][0]
                 print("Predicted class:", POSE_MAP.get(prediction + 1, prediction))
                 last_print_time = time.time()
 
@@ -140,7 +156,7 @@ def stream_thread(reverse_channels=False):
 
 # ====== Parameters ======
 fs = 250
-window_duration = 0.128 
+window_duration = 0.128
 buffer_size = int(fs * window_duration)
 time_step = 1 / fs
 plot_buffer_len = 3 * fs  # Seconds of data per channel
@@ -152,7 +168,7 @@ b_notch, a_notch = iirnotch(notch_freq / nyq, 30)
 
 # ====== Shared Buffers ======
 channel_buffers = [deque(maxlen=buffer_size) for _ in range(8)]  # for classification
-plot_buffers = [deque(maxlen=plot_buffer_len) for _ in range(8)] # for plotting
+plot_buffers = [deque(maxlen=plot_buffer_len) for _ in range(8)]  # for plotting
 
 prediction_buffer = deque(maxlen=PREDICTION_BUFFER_SIZE)
 
@@ -168,32 +184,32 @@ reverse_channels = select_arm()
 threading.Thread(target=stream_thread, daemon=True, args=(reverse_channels,)).start()
 
 # ====== Plotting ======
-fig, axes = plt.subplots(nrows=9, ncols=1, figsize=(10, 14), sharex=False)
-emg_axes = axes[:-1]
-image_ax = axes[-1]
+# Use GridSpec for flexible layout
+fig = plt.figure(figsize=(12, 10))
+gs = GridSpec(3, 4, figure=fig)
 
+# Image at the top (taking entire first row)
+image_ax = fig.add_subplot(gs[0, :])
+img_display = image_ax.imshow(POSE_IMAGES[1])
+image_ax.axis('off')
+
+# EMG axes in the lower 2/3 of the layout, arranged in 2 rows of 4
+emg_axes = []
 lines = []
 
-for i, ax in enumerate(emg_axes):
-    line, = ax.plot([], [], label=f"Channel {i+1}")
+for i in range(8):
+    ax = fig.add_subplot(gs[1 + i // 4, i % 4])
+    line, = ax.plot([], [], label=f"Channel {i+1}", linewidth=0.5)
     lines.append(line)
-    ax.set_ylim(-300, 300)  # Adjust based on expected signal range
+    ax.set_ylim(-300, 300)
     ax.set_xlim(0, plot_buffer_len)
     ax.set_ylabel(f"Ch {i+1}")
-    ax.legend(loc="upper right")
+    ax.set_title(f"Channel {i+1}")
+    emg_axes.append(ax)
 
 emg_axes[-1].set_xlabel("Samples")
-
-current_pose = 1  # default
-img_display = image_ax.imshow(POSE_IMAGES[current_pose])
-image_ax.axis('off')
-# Add dynamic text label above the image
-label_text = image_ax.text(
-    0.5, 1.05, POSE_MAP[current_pose], ha='center', va='bottom',
-    fontsize=14, fontweight='bold', transform=image_ax.transAxes
-)
-
 plt.tight_layout()
+
 
 def animate(i):
     global current_pose
@@ -208,10 +224,8 @@ def animate(i):
     except Exception:
         current_pose = 1
     img_display.set_data(POSE_IMAGES[current_pose])
-    label_text.set_text(POSE_MAP[current_pose])
 
-    return lines + [img_display, label_text]
-
+    return lines + [img_display]
 
 
 ani = FuncAnimation(fig, animate, interval=50, blit=True)
