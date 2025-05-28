@@ -2,7 +2,7 @@ import threading
 import time
 from collections import deque
 from itertools import combinations
-
+import os
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,9 +10,8 @@ import pandas as pd
 from matplotlib.animation import FuncAnimation
 from pyOpenBCI import OpenBCICyton
 from scipy.signal import butter, iirnotch, lfilter, lfilter_zi
-
-# Feature extraction (can still use your own module)
-from feature_extractors import iemg, ln_rms, var, msv
+from tensorflow.keras.models import load_model
+from feature_extractors import ln_rms, aac, mavs, ssc, wamp, skewness, ssi
 
 POSE_MAP = {
     1: "rest",
@@ -24,43 +23,46 @@ POSE_MAP = {
 }
 SCALE_FACTOR_EEG = (4500000) / 24 / (2**23 - 1)  # uV/count
 
-# ====== Parameters ======
-fs = 250
-window_duration = 0.5
-buffer_size = int(fs * window_duration)
-time_step = 1 / fs
-plot_buffer_len = 250  # 1s of data per channel
+# Ask user for arm selection before starting the stream
+def select_arm():
+    while True:
+        choice = input("Select arm [L/R]: ").strip().lower()
+        if choice in ["l", "r"]:
+            return choice == "r"
+        print("Invalid input. Please enter 'L' for left or 'R' for right.")
 
-lowcut, highcut, notch_freq, order = 20, 124, 50, 8
-nyq = 0.5 * fs
-b_band, a_band = butter(order, [lowcut / nyq, highcut / nyq], btype="band")
-b_notch, a_notch = iirnotch(notch_freq / nyq, 30)
+# ====== Model Selection ======
+def select_model(models_dir="models", max_models=10):
+    subdirs = [d for d in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, d))]
+    subdirs = sorted(subdirs)[:max_models]
 
-# ====== Shared Buffers ======
-channel_buffers = [deque(maxlen=buffer_size) for _ in range(8)]  # for classification
-plot_buffers = [deque(maxlen=plot_buffer_len) for _ in range(8)] # for plotting
+    if not subdirs:
+        raise ValueError("No models found in the models directory.")
 
-band_states = [lfilter_zi(b_band, a_band) * 0 for _ in range(8)]
-notch_states = [lfilter_zi(b_notch, a_notch) * 0 for _ in range(8)]
+    print("Available Models:")
+    for i, name in enumerate(subdirs):
+        print(f"{i + 1}. {name}")
 
-# ====== Load Models ======
-model = joblib.load("emg_rf_model.pkl")
-scaler = joblib.load("emg_scaler.pkl")
+    idx = int(input(f"Select a model [1-{len(subdirs)}]: ")) - 1
+    if not (0 <= idx < len(subdirs)):
+        raise ValueError("Invalid selection.")
 
+    selected_path = os.path.join(models_dir, subdirs[idx])
+    model = load_model(os.path.join(selected_path, "model.h5"))
+    scaler = joblib.load(os.path.join(selected_path, "scaler.pkl"))
+    print(f"Loaded model: {subdirs[idx]}")
+    return model, scaler
 
-# ====== Feature Extraction ======
-def extract_features(window, feature_extractors=[iemg, msv, var, ln_rms]):
+def extract_features(window, feature_extractors=[ln_rms, aac, mavs, ssc, wamp, skewness, ssi]):
     features = []
     channel_data = []
 
     for i in range(8):
-        x = window[f" EXG Channel {i}"].values
+        x = window[f' EXG Channel {i}'].values
         channel_data.append(x)
         for extractor in feature_extractors:
             result = extractor(x)
-            features.extend(
-                result if isinstance(result, (list, np.ndarray)) else [result]
-            )
+            features.extend(result if isinstance(result, (list, np.ndarray)) else [result])
 
     channel_data = np.array(channel_data)
     for i, j in combinations(range(8), 2):
@@ -73,25 +75,32 @@ def extract_features(window, feature_extractors=[iemg, msv, var, ln_rms]):
 def classify_real_time(window):
     features = extract_features(window)
     features_scaled = scaler.transform([features])
-    return model.predict(features_scaled)[0]
+    probs = model.predict(features_scaled, verbose=0)
+    predicted_class = np.argmax(probs, axis=1)[0]  # using softmax so choose the highest probability
+    return predicted_class
 
 
 # ====== Streaming Thread ======
-def stream_thread():
+def stream_thread(reverse_channels=False):
     global band_states, notch_states, last_print_time
 
     def handle_stream(sample):
         global band_states, notch_states, last_print_time
 
+        raw_data = []
         for i in range(8):
             x = sample.channels_data[i] * SCALE_FACTOR_EEG
             x_band, band_states[i] = lfilter(b_band, a_band, [x], zi=band_states[i])
-            x_notch, notch_states[i] = lfilter(
-                b_notch, a_notch, x_band, zi=notch_states[i]
-            )
+            x_notch, notch_states[i] = lfilter(b_notch, a_notch, x_band, zi=notch_states[i])
             x_notch[0] = np.clip(x_notch[0], -600, 600)
-            channel_buffers[i].append(x_notch[0])
-            plot_buffers[i].append(x_notch[0])
+            raw_data.append(x_notch[0])
+
+        if reverse_channels:
+            raw_data = raw_data[::-1]  # Reverse channel order if on right arm
+
+        for i, val in enumerate(raw_data):
+            channel_buffers[i].append(val)
+            plot_buffers[i].append(val)
 
         if all(len(buf) == buffer_size for buf in channel_buffers):
             if time.time() - last_print_time > window_duration:
@@ -114,8 +123,32 @@ def stream_thread():
     board.start_stream(handle_stream)
 
 
+# ====== Parameters ======
+fs = 250
+window_duration = 0.128 
+buffer_size = int(fs * window_duration)
+time_step = 1 / fs
+plot_buffer_len = 3 * fs  # Seconds of data per channel
+
+lowcut, highcut, notch_freq, order = 20, 124, 50, 8
+nyq = 0.5 * fs
+b_band, a_band = butter(order, [lowcut / nyq, highcut / nyq], btype="band")
+b_notch, a_notch = iirnotch(notch_freq / nyq, 30)
+
+# ====== Shared Buffers ======
+channel_buffers = [deque(maxlen=buffer_size) for _ in range(8)]  # for classification
+plot_buffers = [deque(maxlen=plot_buffer_len) for _ in range(8)] # for plotting
+
+band_states = [lfilter_zi(b_band, a_band) * 0 for _ in range(8)]
+notch_states = [lfilter_zi(b_notch, a_notch) * 0 for _ in range(8)]
+
+# Load the selected model and scaler
+model, scaler = select_model()
+
+reverse_channels = select_arm()
+
 # ====== Start Thread ======
-threading.Thread(target=stream_thread, daemon=True).start()
+threading.Thread(target=stream_thread, daemon=True, args=(reverse_channels,)).start()
 
 # ====== Plotting ======
 fig, axes = plt.subplots(nrows=8, ncols=1, figsize=(10, 12), sharex=True)
