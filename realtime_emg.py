@@ -12,11 +12,20 @@ from pyOpenBCI import OpenBCICyton
 from scipy.signal import butter, iirnotch, lfilter, lfilter_zi
 from tensorflow.keras.models import load_model
 from feature_extractors import ln_rms, aac, mavs, ssc, wamp, skewness, ssi
+import matplotlib.image as mpimg
 
 PRINT_INTERVAL = 0.512
 PREDICTION_BUFFER_SIZE = 8
 CLASSIFY_INTERVAL = PRINT_INTERVAL / PREDICTION_BUFFER_SIZE
-
+SCALE_FACTOR_EEG = (4500000) / 24 / (2**23 - 1)  # uV/count
+POSE_IMAGES = {
+    1: mpimg.imread("imgs/rest.png"),
+    2: mpimg.imread("imgs/fist.png"),
+    3: mpimg.imread("imgs/flexion.png"),
+    4: mpimg.imread("imgs/extension.png"),
+    5: mpimg.imread("imgs/radial.png"),
+    6: mpimg.imread("imgs/ulnar.png"),
+}
 POSE_MAP = {
     1: "rest",
     2: "fist",
@@ -25,7 +34,6 @@ POSE_MAP = {
     5: "radial deviation (right)",
     6: "ulnar deviation (left)",
 }
-SCALE_FACTOR_EEG = (4500000) / 24 / (2**23 - 1)  # uV/count
 
 # Ask user for arm selection before starting the stream
 def select_arm():
@@ -160,10 +168,13 @@ reverse_channels = select_arm()
 threading.Thread(target=stream_thread, daemon=True, args=(reverse_channels,)).start()
 
 # ====== Plotting ======
-fig, axes = plt.subplots(nrows=8, ncols=1, figsize=(10, 12), sharex=True)
+fig, axes = plt.subplots(nrows=9, ncols=1, figsize=(10, 14), sharex=False)
+emg_axes = axes[:-1]
+image_ax = axes[-1]
+
 lines = []
 
-for i, ax in enumerate(axes):
+for i, ax in enumerate(emg_axes):
     line, = ax.plot([], [], label=f"Channel {i+1}")
     lines.append(line)
     ax.set_ylim(-300, 300)  # Adjust based on expected signal range
@@ -171,16 +182,36 @@ for i, ax in enumerate(axes):
     ax.set_ylabel(f"Ch {i+1}")
     ax.legend(loc="upper right")
 
-axes[-1].set_xlabel("Samples")
+emg_axes[-1].set_xlabel("Samples")
+
+current_pose = 1  # default
+img_display = image_ax.imshow(POSE_IMAGES[current_pose])
+image_ax.axis('off')
+# Add dynamic text label above the image
+label_text = image_ax.text(
+    0.5, 1.05, POSE_MAP[current_pose], ha='center', va='bottom',
+    fontsize=14, fontweight='bold', transform=image_ax.transAxes
+)
+
 plt.tight_layout()
 
-
 def animate(i):
+    global current_pose
     for idx, line in enumerate(lines):
         y = list(plot_buffers[idx])
         x = list(range(len(y)))
         line.set_data(x, y)
-    return lines
+
+    # Update prediction and corresponding image + label
+    try:
+        current_pose = Counter(prediction_buffer).most_common(1)[0][0] + 1
+    except Exception:
+        current_pose = 1
+    img_display.set_data(POSE_IMAGES[current_pose])
+    label_text.set_text(POSE_MAP[current_pose])
+
+    return lines + [img_display, label_text]
+
 
 
 ani = FuncAnimation(fig, animate, interval=50, blit=True)
