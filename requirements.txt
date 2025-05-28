@@ -6,3 +6,5 @@ joblib
 pyOpenBCI
 tensorflow
 scikit-learn
+pyserial
+xmltodict

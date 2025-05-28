@@ -103,12 +103,12 @@ def stream_thread(reverse_channels=False):
             plot_buffers[i].append(val)
 
         if all(len(buf) == buffer_size for buf in channel_buffers):
-            if time.time() - last_print_time > window_duration:
+            if time.time() - last_print_time > 0.5:
                 window = pd.DataFrame(
                     {f" EXG Channel {i}": list(channel_buffers[i]) for i in range(8)}
                 )
                 prediction = classify_real_time(window)
-                print("Predicted class:", POSE_MAP.get(prediction, prediction))
+                print("Predicted class:", POSE_MAP.get(prediction + 1, prediction))
                 last_print_time = time.time()
 
     last_print_time = 0
