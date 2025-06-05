@@ -201,7 +201,7 @@ for i in range(8):
     ax = fig.add_subplot(gs[1 + i // 4, i % 4])
     line, = ax.plot([], [], label=f"Channel {i+1}", linewidth=0.5)
     lines.append(line)
-    ax.set_ylim(-300, 300)
+    ax.set_ylim(-600, 600)
     ax.set_xlim(0, plot_buffer_len)
     ax.set_ylabel(f"Ch {i+1}")
     ax.set_title(f"Channel {i+1}")
