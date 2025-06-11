@@ -18,28 +18,49 @@ This application provides a graphical user interface to capture, process, and cl
 
 ## Setup Instructions
 
-### 1. Create a Virtual Environment
+### 1. Clone repository and Open the directory in your terminal
 
-It is highly recommended to run this project in a Python virtual environment.
+```
+git clone https://github.com/LilOz/emg-realtime-classification
+```
 
-```bash
-# Navigate to the project directory
-cd /path/to/your/project
+```
+cd emg-realtime-classification
+```
 
-# Create the virtual environment
+### 2. Create a virtual environment:
+
+```
 python -m venv venv
+```
 
-# Activate the virtual environment
-# On Windows:
+or
+
+```
+python3 -m venv venv
+```
+
+### 3. Activate virtual environment:
+
+Windows
+
+```
 venv\Scripts\activate
-# On macOS/Linux:
+```
+
+MacOS / Linux
+
+```
 source venv/bin/activate
 ```
 
-### 2. Install Dependencies
+After doing this you should see (venv) in your terminal
 
-Install all the required Python packages using the provided `requirements.txt` file.
+### 4. Install Dependencies:
 
-```bash
+```
 pip install -r requirements.txt
 ```
+
+## Running the Application
+...
