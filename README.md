@@ -2,6 +2,8 @@
 
 This application provides a graphical user interface to capture, process, and classify surface electromyography (sEMG) signals from an OpenBCI Cyton board in real-time. It uses a pre-trained machine learning model to predict one of six hand and wrist gestures.
 
+![Real-Time Classification Image](realtime-application-screengrab (2).png)
+
 ## Features
 
 * **Live Data Visualisation:** Plots all 8 sEMG channels in real-time.
