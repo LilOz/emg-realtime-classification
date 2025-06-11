@@ -63,4 +63,18 @@ pip install -r requirements.txt
 ```
 
 ## Running the Application
-...
+
+### Launch the Script
+
+With your virtual environment activated, run the script from your terminal:
+
+`python realtime_emg.py`
+
+### Configure Session
+
+The script will prompt you in the terminal for two configuration steps:
+
+1.  **Select a model:** It will list all available models from the `models` directory. Enter the number corresponding to the model you wish to use.
+2.  **Select the arm:** Enter `L` for the left arm or `R` for the right arm.
+
+Once configured, the GUI will launch, connect to the board, and begin real-time classification.
